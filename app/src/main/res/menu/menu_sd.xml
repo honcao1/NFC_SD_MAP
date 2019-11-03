@@ -3,4 +3,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto">
     <item android:title="Đọc SDCard"
         android:id="@+id/menuFile"/>
+
+    <item android:title="Scan Bluetooth"
+        android:id="@+id/menuBlu"/>
 </menu>

@@ -5,7 +5,11 @@ import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 
 import android.Manifest;
+import android.app.Activity;
 import android.app.PendingIntent;
+import android.bluetooth.BluetoothAdapter;
+import android.bluetooth.BluetoothDevice;
+import android.bluetooth.BluetoothSocket;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
@@ -21,6 +25,7 @@ import android.nfc.NfcAdapter;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
+import android.os.Message;
 import android.os.Parcelable;
 import android.util.Log;
 import android.view.Menu;
@@ -47,31 +52,54 @@ import com.google.android.gms.maps.model.PatternItem;
 import com.google.android.gms.maps.model.Polyline;
 import com.google.android.gms.maps.model.PolylineOptions;
 
-import org.json.JSONArray;
-import org.json.JSONException;
-import org.json.JSONObject;
-
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileInputStream;
-import java.io.FileReader;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.io.OutputStream;
 import java.io.UnsupportedEncodingException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.UUID;
+
+import android.os.Handler;
 
 public class MainActivity extends AppCompatActivity implements OnMapReadyCallback {
     // Declaration Variables
     GoogleMap map;
+    Polyline polyline;
     List<LatLng> poly = new ArrayList<LatLng>();
-    List<ListLatLng> pointPoly = new ArrayList<ListLatLng>();
+    List<ListLatLng> polyP = new ArrayList<ListLatLng>();
 
     Intent myFile;
     String path;
 
     NfcAdapter nfcAdapter;
+
+    private static final int REQUEST_ENABLE_BT = 1;
+    private static final int CONNECT_BT = 2;
+    private static final int MESSAGE_READ = 3;
+
+    Handler mHandler;
+    StringBuilder dataBluetoorh = new StringBuilder();
+
+    ConnectedThread bluetooth;
+
+    BluetoothAdapter mBluetoothAdapter = null;
+    BluetoothDevice mBluetoothDevice = null;
+    BluetoothSocket mBluetoothSocket = null;
+
+    UUID mUUID = UUID.fromString("00001101-0000-1000-8000-00805f9b34fb");
+
+    boolean connect = false;
+
+    private static String MAC = null;
+
+    Button btnGui;
+    TextView txtBTData;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -79,13 +107,47 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
         setContentView(R.layout.activity_main);
 
         initView();
+        addControl();
     }
+
 
     @Override
     protected void onActivityResult(int requestCode, int resultCode, @Nullable Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
 
         switch (requestCode) {
+            case REQUEST_ENABLE_BT:
+                if (resultCode == Activity.RESULT_OK) {
+                    Toast.makeText(getApplicationContext(),"Bluetooth on", Toast.LENGTH_LONG).show();
+                } else {
+                    Toast.makeText(getApplicationContext(),"Bluetooth off", Toast.LENGTH_LONG).show();
+                }
+                break;
+
+            case CONNECT_BT:
+                if (resultCode == Activity.RESULT_OK) {
+                    MAC = data.getExtras().getString(ListDevices.CONNECT_MAC);
+
+                    //Toast.makeText(getApplicationContext(),"MAC" + MAC, Toast.LENGTH_LONG).show();
+                    mBluetoothDevice = mBluetoothAdapter.getRemoteDevice(MAC);
+                    try {
+                        mBluetoothSocket = mBluetoothDevice.createRfcommSocketToServiceRecord(mUUID);
+
+                        mBluetoothSocket.connect();
+
+                        bluetooth = new ConnectedThread(mBluetoothSocket);
+                        bluetooth.start();
+
+                        connect = true;
+
+                        Toast.makeText(getApplicationContext(), "CONNECT", Toast.LENGTH_LONG).show();
+                    } catch (IOException err){
+                        Toast.makeText(getApplicationContext(),"ERR" + err, Toast.LENGTH_LONG).show();
+                    }
+                } else {
+                    //Toast.makeText(getApplicationContext(),"Bluetooth off", Toast.LENGTH_LONG).show();
+                }
+                break;
             case 10:
                 if (resultCode == RESULT_OK) {
                     String folder = data.getData().getPath();
@@ -100,6 +162,7 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
 
                     getFileData();
 
+//                    polyline.remove();
                     drawPolyLatLng();
                 }
                 break;
@@ -130,8 +193,13 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
             if (parcelables != null && parcelables.length > 0) {
                 String[] dataLatng = readTextFromMesage((NdefMessage)parcelables[0]);
 
-                checkPointMapNfc(dataLatng);
+//                Log.d("dataLatng", String.valueOf(dataLatng.length));
 
+                if (dataLatng.length > 4){
+                    checkPointMapNfc(dataLatng);
+                } else {
+                    Toast.makeText(this, "Khong dung dinh dang", Toast.LENGTH_SHORT).show();
+                }
             } else {
                 Toast.makeText(this, "No ndef message found!!!", Toast.LENGTH_SHORT).show();
             }
@@ -180,7 +248,6 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
         super.onRestart();
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-
             if (checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
                 ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.READ_EXTERNAL_STORAGE}, 0);
             }
@@ -204,6 +271,18 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
                 startActivityForResult(myFile, 10);
                 Log.d("OpenFile", "OpenFile");
                 break;
+            case R.id.menuBlu:
+                if (connect){
+                    try {
+                        mBluetoothSocket.close();
+                        Toast.makeText(getApplicationContext(), "DISCONNECT", Toast.LENGTH_LONG).show();
+                        connect = false;
+                    } catch (IOException err){}
+                } else {
+                    Intent abreLista = new Intent(MainActivity.this, ListDevices.class);
+                    startActivityForResult(abreLista, CONNECT_BT);
+                }
+                break;
         }
 
         return super.onOptionsItemSelected(item);
@@ -214,6 +293,51 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
         mapFragment.getMapAsync(this);
 
         nfcAdapter = NfcAdapter.getDefaultAdapter(this);
+
+        btnGui = findViewById(R.id.btnGui);
+        txtBTData = findViewById(R.id.txtBTData);
+
+        mBluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
+
+        if (mBluetoothAdapter == null) {
+            Toast.makeText(getApplicationContext(), "App stop", Toast.LENGTH_LONG).show();
+        } else if (!mBluetoothAdapter.isEnabled()) {
+            Intent enableBtIntent = new Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE);
+            startActivityForResult(enableBtIntent, REQUEST_ENABLE_BT);
+        }
+    }
+
+    private void addControl() {
+        btnGui.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                bluetooth.write("BT");
+            }
+        });
+
+        mHandler = new Handler(){
+            @Override
+            public void handleMessage(Message msg) {
+                if (msg.what == MESSAGE_READ){
+                    String str = (String) msg.obj;
+
+                    dataBluetoorh.append(str);
+
+                    int aa = dataBluetoorh.indexOf("}");
+                    if (aa > 0) {
+                        String str_1 = dataBluetoorh.substring(0, aa);
+
+                        int aaa = str_1.length();
+                        if (dataBluetoorh.charAt(0) == '{'){
+                            String str_2 = dataBluetoorh.substring(1, aaa);
+                            txtBTData.setText(str_2);
+                            Log.d("DataBT", str_2);
+                        }
+                        dataBluetoorh.delete(0, dataBluetoorh.length());
+                    }
+                }
+            }
+        };
     }
 
     private boolean checkExternalStorageState(){
@@ -254,15 +378,15 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
                     String line = null;
 
                     while ((line = buff.readLine()) != null){
-                        Log.d("getFile", line);
+//                        Log.d("getFile", line);
                         String[] data = null;
                         data = line.split(",");
 
                         LatLng point = new LatLng(Double.parseDouble(data[2]), Double.parseDouble(data[3]));
                         poly.add(point);
 
-//                        ListLatLng listLatLng = new ListLatLng(data[0], data[1], Double.parseDouble(data[2]), Double.parseDouble(data[3]), data[4]);
-//                        pointPoly.add(listLatLng);
+                        ListLatLng listLatLng = new ListLatLng(data[0], data[1], Double.parseDouble(data[2]), Double.parseDouble(data[3]), data[4]);
+                        polyP.add(listLatLng);
                     }
                     fis.close();
                 }
@@ -277,15 +401,22 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
 
     private void drawPolyLatLng(){
         List<LatLng> sourcePoints = new ArrayList<>();
-        for (int i=0; i<poly.size(); i++) {
-            sourcePoints.add(new LatLng(poly.get(i).latitude, poly.get(i).longitude));
 
-            if (i/50==0) {
+//        for (int i=0; i<poly.size(); i++) {
+//            sourcePoints.add(new LatLng(poly.get(i).latitude, poly.get(i).longitude));
+//        }
+
+//        Log.d("SizePoly", String.valueOf(polyP.size()));
+        for (int i=0; i<polyP.size(); i++) {
+            sourcePoints.add(new LatLng(polyP.get(i).getLatitude(), polyP.get(i).getLongitude()));
+
+            if ( (i%100==0) || (i==polyP.size()-1) ){
+
                 MarkerOptions marker = new MarkerOptions();
-                marker.title(poly.get(i).latitude+" "+poly.get(i).longitude);
-                marker.snippet("Date/Time");
-                marker.position(new LatLng(poly.get(i).latitude, poly.get(i).longitude));
-                marker.icon(BitmapDescriptorFactory.fromBitmap(resizeMapIcons("icon_tau", 100, 100)));
+                marker.title(polyP.get(i).getLatitude()+ " " + polyP.get(i).getLongitude());
+                marker.snippet(polyP.get(i).getDate()+" "+polyP.get(i).getTime());
+                marker.position(new LatLng(polyP.get(i).getLatitude(), polyP.get(i).getLongitude()));
+                marker.icon(BitmapDescriptorFactory.fromBitmap(resizeMapIcons("icon_tau", 80, 80)));
                 map.addMarker(marker);
             }
         }
@@ -295,7 +426,7 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
         polylineOptions.width(10f);
         polylineOptions.color(Color.rgb(0, 178, 255));
 
-        Polyline polyline = map.addPolyline(polylineOptions);
+        polyline = map.addPolyline(polylineOptions);
         List<PatternItem> pattern = Arrays.<PatternItem>asList(new Dot(), new Gap(10f));
         polyline.setPattern(pattern);
 
@@ -306,22 +437,24 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
         map.animateCamera(CameraUpdateFactory.newCameraPosition(cameraPosition));
     }
 
-    private void checkPointMapNfc(String[] dataLatng) {
-        String date = dataLatng[0].substring(0,2)+"/"+dataLatng[0].substring(2,4)+"/"+ "20" +dataLatng[0].substring(4);
+    private void checkPointMapNfc(String[] data) {
+//        String date = dataLatng[0].substring(0,2)+"/"+dataLatng[0].substring(2,4)+"/"+ "20" +dataLatng[0].substring(4);
+//
+//        int hh = Integer.parseInt(dataLatng[1].substring(0,1)) + 7;
+//        String time = hh+":"+dataLatng[1].substring(1,3)+":"+dataLatng[1].substring(3,5);
 
-        int hh = Integer.parseInt(dataLatng[1].substring(0,1)) + 7;
-        String time = hh+":"+dataLatng[1].substring(1,3)+":"+dataLatng[1].substring(3,5);
+        double lat = Double.parseDouble(data[2]);
+        double lng = Double.parseDouble(data[3]);
 
-        double lat = Double.parseDouble(dataLatng[2]);
-        double lng = Double.parseDouble(dataLatng[3]);
+        ListLatLng pointLatLng = new ListLatLng(data[0], data[1], lat, lng, data[4]);
 
-        String title = geoLocate(lat, lng);
+//        String title = geoLocate(lat, lng);
 
         map.moveCamera(CameraUpdateFactory.newLatLngZoom(new LatLng(lat, lng), 15));
 
         MarkerOptions marker = new MarkerOptions();
-        marker.title(title);
-        marker.snippet(date+" "+time);
+        marker.title(lat + " " + lng);
+        marker.snippet(pointLatLng.getDate()+" "+pointLatLng.getTime());
         marker.position(new LatLng(lat, lng));
         marker.icon(BitmapDescriptorFactory.fromBitmap(resizeMapIcons("icon_ca", 100, 100)));
         map.addMarker(marker);
@@ -349,17 +482,15 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
 
             String tagContent = getTextFromNdefRecord(ndefRecord);
 
-//            if (tagContent.indexOf("geo:") >= 0) {
-//                String[] latlng= tagContent.split(",");
-//
-//                edtLat.setText(latlng[0].substring(4).trim());
-//                edtLng.setText(latlng[1].trim());
-//            } else {
-//                Toast.makeText(this, "Khong dung dinh dang", Toast.LENGTH_SHORT).show();
-//                return;
-//            }
-            String[] dataLaLng = tagContent.split(",");
-            return dataLaLng;
+            Log.d("tagContent", tagContent);
+
+            if (tagContent.indexOf(",") != 0){
+                String[] dataLaLng = tagContent.split(",");
+                return dataLaLng;
+            }
+            else {
+                Toast.makeText(this, "Định dạng không đúng", Toast.LENGTH_SHORT).show();
+            }
         } else {
             Toast.makeText(this, "No ndef records found!!!", Toast.LENGTH_SHORT).show();
         }
@@ -409,9 +540,60 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
         return str;
     }
 
-    public Bitmap resizeMapIcons(String iconName, int width, int height){
+    private Bitmap resizeMapIcons(String iconName, int width, int height){
         Bitmap imageBitmap = BitmapFactory.decodeResource(getResources(),getResources().getIdentifier(iconName, "drawable", getPackageName()));
         Bitmap resizedBitmap = Bitmap.createScaledBitmap(imageBitmap, width, height, false);
         return resizedBitmap;
+    }
+
+    private class ConnectedThread extends Thread {
+        private final InputStream mmInStream;
+        private final OutputStream mmOutStream;
+
+        public ConnectedThread(BluetoothSocket socket) {
+            InputStream tmpIn = null;
+            OutputStream tmpOut = null;
+
+            // Get the input and output streams; using temp objects because
+            // member streams are final.
+            try {
+                tmpIn = socket.getInputStream();
+                tmpOut = socket.getOutputStream();
+            } catch (IOException e) {}
+
+            mmInStream = tmpIn;
+            mmOutStream = tmpOut;
+        }
+
+        public void run() {
+            byte[] inBuffer = new byte[1024];
+            int bytes; // bytes returned from read()
+
+            // Keep listening to the InputStream until an exception occurs.
+            while (true) {
+                try {
+                    // Read from the InputStream.
+                    bytes = mmInStream.read(inBuffer);
+
+//                    String dataBt = new String(inBuffer, 0, bytes);
+                    String dataBt = "{241019,4083300,10.777864,106.765650,2.57,7,1,0,1,1}";
+
+                    mHandler.obtainMessage(MESSAGE_READ, bytes, -1, dataBt).sendToTarget();
+
+                } catch (IOException e) {
+
+                }
+            }
+        }
+
+        // Call this from the main activity to send data to the remote device.
+        public void write(String dataEvent) {
+            try {
+                byte[] msgBuffer = dataEvent.getBytes();
+                mmOutStream.write(msgBuffer);
+            } catch (IOException e) {
+
+            }
+        }
     }
 }

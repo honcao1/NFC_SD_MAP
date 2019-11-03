@@ -22,8 +22,14 @@ public class ListLatLng {
     }
 
     public String getTime() {
-        int hh = Integer.parseInt(time.substring(0,1)) + 7;
-        String mtime = hh+":"+time.substring(1,3)+":"+time.substring(3,5);
+        String mtime=null;
+        if (time.length()==7) {
+            int hh = Integer.parseInt(time.substring(0, 1)) + 7;
+            mtime = hh + ":" + time.substring(1, 3) + ":" + time.substring(3, 5);
+        } else if (time.length()==8){
+            int hh = Integer.parseInt(time.substring(0, 2)) + 7;
+            mtime = hh + ":" + time.substring(2, 4) + ":" + time.substring(4, 6);
+        }
 
         return mtime;
     }
